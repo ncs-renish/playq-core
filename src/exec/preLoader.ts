@@ -12,6 +12,7 @@
 import { config, vars } from "../global";
 import path from "path";
 import fs from "fs";
+import { isCloudEnabled, loadResolvedCloudConfig } from "../helper/browsers/cloudBrowserManager";
 
 // Use minimal addons.json for discovery, config for logic
 const projectRoot = process.env.PLAYQ_PROJECT_ROOT || process.cwd();
@@ -23,6 +24,17 @@ try {
   addonList = JSON.parse(raw);
 } catch (e) {
   console.warn("No addons.json found or failed to load:", e);
+}
+
+if (isCloudEnabled()) {
+  try {
+    const resolvedCloud = loadResolvedCloudConfig();
+    const providerName = resolvedCloud?.provider || "browserstack";
+    vars.setValue("config.cloud.resolvedProvider", String(providerName));
+    console.log(`[PlayQ Cloud] Provider loaded: ${providerName}`);
+  } catch (error: any) {
+    throw new Error(`[PlayQ Cloud] Failed to load provider config: ${error?.message || error}`);
+  }
 }
 
 for (const addon of addonList) {
