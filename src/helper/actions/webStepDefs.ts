@@ -315,7 +315,7 @@ Given("Web: Take Full Screenshot -options: {param}", async function (options) {
 // javascriptActions.ts
 Given("Web: Execute Script -code: {param}", async function (code) {
   let page = webFixture.getCurrentPage();
-  await webActions.executeScript(page, (script: string) => eval(script), [code]);
+  await webActions.executeScript(page, (script: any) => eval(Array.isArray(script) ? script[0] : script), [code]);
 });
 
 // validationActions.ts helpers
