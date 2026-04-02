@@ -235,9 +235,26 @@ Given("Web: Drag and Drop -source: {param} -target: {param} -options: {param}", 
 });
 
 // cookieActions.ts
-Given("Web: Set Cookie -name: {param} -value: {param}", async function (name, value) {
+Given(/^Web: Set Cookie -name: (.+?) -value: (.+?)(?: -options: (.+))?$/, async function (name, value, options) {
   let page = webFixture.getCurrentPage();
-  await webActions.setCookie(page, name, value);
+  const normalizeQuoted = (input: any) => {
+    if (typeof input !== 'string') return input;
+    const trimmed = input.trim();
+    const isWrappedDouble = trimmed.startsWith('"') && trimmed.endsWith('"');
+    const isWrappedSingle = trimmed.startsWith("'") && trimmed.endsWith("'");
+    return (isWrappedDouble || isWrappedSingle) ? trimmed.slice(1, -1) : trimmed;
+  };
+
+  const normalizedName = normalizeQuoted(name);
+  const normalizedValue = normalizeQuoted(value);
+  const normalizedOptions = normalizeQuoted(options);
+
+  await webActions.setCookie(page, normalizedName, normalizedValue, normalizedOptions);
+});
+
+Given("Web: Get Cookie -name: {param} -options: {param}", async function (name, options) {
+  let page = webFixture.getCurrentPage();
+  const val = await webActions.getCookie(page, name, options);
 });
 
 Given("Web: Get Cookie -name: {param} -storeTo: {param}", async function (name, varName) {
@@ -298,7 +315,7 @@ Given("Web: Take Full Screenshot -options: {param}", async function (options) {
 // javascriptActions.ts
 Given("Web: Execute Script -code: {param}", async function (code) {
   let page = webFixture.getCurrentPage();
-  await webActions.executeScript(page, (script: string) => eval(script), [code]);
+  await webActions.executeScript(page, (script: any) => eval(Array.isArray(script) ? script[0] : script), [code]);
 });
 
 // validationActions.ts helpers
@@ -411,6 +428,38 @@ Given("Web: Fill Alert -text: {param} -options: {param}", async function (text, 
 Given("Web: See Alert Text -expected: {param} -options: {param}", async function (expected, options) {
   let page = webFixture.getCurrentPage();
   await webActions.seeAlertText(page, expected, options);
+});
+
+Given("Web: Click button and Accept Alert -field: {param} -options: {param}", async function (field, options) {
+  let page = webFixture.getCurrentPage();
+  await Promise.all([
+    webActions.acceptAlert(page, options),
+    webActions.clickButton(page, field, options),
+  ]);
+});
+
+Given("Web: Click button and Dismiss Alert -field: {param} -options: {param}", async function (field, options) {
+  let page = webFixture.getCurrentPage();
+  await Promise.all([
+    webActions.dismissAlert(page, options),
+    webActions.clickButton(page, field, options),
+  ]);
+});
+
+Given("Web: Click button and Fill Alert -field: {param} -text: {param} -options: {param}", async function (field, text, options) {
+  let page = webFixture.getCurrentPage();
+  await Promise.all([
+    webActions.fillAlert(page, text, options),
+    webActions.clickButton(page, field, options),
+  ]);
+});
+
+Given("Web: Click button and See Alert Text -field: {param} -expected: {param} -options: {param}", async function (field, expected, options) {
+  let page = webFixture.getCurrentPage();
+  await Promise.all([
+    webActions.seeAlertText(page, expected, options),
+    webActions.clickButton(page, field, options),
+  ]);
 });
 
 // downloadActions.ts

@@ -253,8 +253,26 @@ function resolveModulePath(basePath: string): string {
 function parseLooseJson(str: string): Record<string, any> {
   if (!str || str.trim() === "" || str.trim() === '""') return {};
 
-  const needsBraces = !str.trim().startsWith("{") || !str.trim().endsWith("}");
-  let wrappedStr = needsBraces ? `{${str}}` : str;
+  const raw = str.trim();
+  const tryParseStrict = (input: string) => {
+    try {
+      const parsed = JSON.parse(input);
+      if (parsed && typeof parsed === 'object') return parsed;
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const strictParsed = tryParseStrict(raw);
+  if (strictParsed !== undefined) return strictParsed;
+
+  const unescapedQuotes = raw.replace(/\\"/g, '"').replace(/\\'/g, "'");
+  const strictUnescapedParsed = tryParseStrict(unescapedQuotes);
+  if (strictUnescapedParsed !== undefined) return strictUnescapedParsed;
+
+  const needsBraces = !unescapedQuotes.startsWith("{") || !unescapedQuotes.endsWith("}");
+  let wrappedStr = needsBraces ? `{${unescapedQuotes}}` : unescapedQuotes;
 
   try {
     const locatorRegex = /(["']?locator["']?\s*:\s*)(xpath=[^,\}\n\r]+|css=[^,\}\n\r]+|chain=[^,\}\n\r]+)/g;
