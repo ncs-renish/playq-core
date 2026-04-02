@@ -1,6 +1,6 @@
 {
   "name": "@playq/core",
-  "version": "0.2.93",
+  "version": "0.2.94",
   "description": "PlayQ Core (Phase 1) - raw TypeScript sources only.",
   "files": [
     "bin",
@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json || echo 'Skipping build (non-critical errors)'",
+    "build": "npx tsc -p tsconfig.json || echo 'Skipping build (non-critical errors)'",
     "prepublishOnly": "npm run build",
     "util": "ts-node -r tsconfig-paths/register src/scripts/util.ts"
   },

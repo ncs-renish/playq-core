@@ -1,3 +1,7 @@
+# Builds - Temp build during development.
+builds/
+
+
 # Dependencies
 node_modules/
 npm-debug.log*
