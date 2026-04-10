@@ -76,7 +76,7 @@ export function getTestData(file: string, sheetName?: string): any[] {
     case '.xlsx': {
         const workbook = XLSX.readFile(filePath);
         const sheet = workbook.Sheets[sheetName || workbook.SheetNames[0]];
-        const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { raw: false });
+        const rows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { raw: false, defval: '' });
 
         // Try to parse booleans/numbers
         return rows.map(row => {
@@ -105,4 +105,171 @@ export function getTestData(file: string, sheetName?: string): any[] {
     default:
       throw new Error(`Unsupported file extension: ${ext}`);
   }
+}
+
+/**
+ * Parses a single CSV line with RFC 4180 quote handling.
+ * @param line - CSV line to parse
+ * @returns Array of field values
+ */
+export function parseCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    const nextCh = line[i + 1];
+
+    if (ch === '"') {
+      if (inQuotes && nextCh === '"') {
+        current += '"';
+        i++; // skip next quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === ',' && !inQuotes) {
+      out.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  out.push(current.trim());
+  return out;
+}
+
+/**
+ * Resolves a data file path with fallback strategy.
+ * @param dataFile - Filename or relative path
+ * @returns Absolute file path
+ */
+export function resolveDataPath(dataFile: string): string {
+  if (!dataFile) return '';
+  if (path.isAbsolute(dataFile)) return dataFile;
+
+  const byCwd = path.resolve(process.cwd(), dataFile);
+  if (fs.existsSync(byCwd)) return byCwd;
+
+  const byTestData = path.resolve(process.cwd(), 'test-data', path.basename(dataFile));
+  if (fs.existsSync(byTestData)) return byTestData;
+
+  return byCwd;
+}
+
+/**
+ * Retrieves a specific row from a data file using metadata.
+ * Used by Cucumber hooks to load row data after Examples preprocessing.
+ *
+ * @param meta - Metadata object with _DATAFILE, _DATASHEET, _DATAROW
+ * @returns Row object keyed by column names, or null if not found
+ *
+ * @example
+ * const row = getRowByMeta({
+ *   _DATAFILE: 'test-data/users.xlsx',
+ *   _DATASHEET: 'Sheet1',
+ *   _DATAROW: '2'
+ * });
+ */
+export function getRowByMeta(meta: Record<string, string>): Record<string, any> | null {
+  const dataFile = (meta._DATAFILE || '').trim();
+  const dataSheet = (meta._DATASHEET || '').trim();
+  const dataRowNum = Number((meta._DATAROW || '').trim());
+  if (!dataFile) return null;
+
+  const fullPath = resolveDataPath(dataFile);
+  if (!fs.existsSync(fullPath)) {
+    console.warn(`⚠️ [DataRowLive] Data file not found: ${fullPath}`);
+    return null;
+  }
+
+  const ext = path.extname(fullPath).toLowerCase();
+
+  if (ext === '.csv') {
+    const lines = fs
+      .readFileSync(fullPath, 'utf-8')
+      .split(/\r?\n/)
+      .filter((line) => line.trim() !== '');
+    if (!lines.length || !Number.isFinite(dataRowNum) || dataRowNum < 2) return null;
+
+    const headers = parseCsvLine(lines[0]);
+    const rowLine = lines[dataRowNum - 1];
+    if (!rowLine) return null;
+
+    const values = parseCsvLine(rowLine);
+    const row: Record<string, any> = {};
+    headers.forEach((h, i) => {
+      row[h] = values[i] ?? '';
+    });
+    return row;
+  }
+
+  if (ext === '.xlsx' || ext === '.xls') {
+    const wb = XLSX.readFile(fullPath);
+    const sheetName = dataSheet || wb.SheetNames[0];
+    if (!sheetName || !wb.Sheets[sheetName]) return null;
+
+    const pickRowFromSheet = (targetSheet: string): Record<string, any> | null => {
+      if (!targetSheet || !wb.Sheets[targetSheet]) return null;
+      const sheetRows = XLSX.utils.sheet_to_json(wb.Sheets[targetSheet], { defval: '' }) as Record<string, any>[];
+      let pickedRow = sheetRows.find((r) => typeof r.__rowNum__ === 'number' && r.__rowNum__ + 1 === dataRowNum);
+      if (!pickedRow && Number.isFinite(dataRowNum) && dataRowNum >= 2) {
+        // Fallback to data-row index (row 2 => index 0)
+        pickedRow = sheetRows[dataRowNum - 2];
+      }
+      return pickedRow || null;
+    };
+
+    const picked = pickRowFromSheet(sheetName);
+    if (!picked) return null;
+
+    const cleaned: Record<string, any> = {};
+    for (const [k, v] of Object.entries(picked)) {
+      if (!k.startsWith('__')) cleaned[k] = v;
+    }
+
+    // XLSX-only linked sheet expansion:
+    // If _LINK exists in selected row, treat values as sheet names in the same workbook.
+    // Special value `_all` means read from all workbook sheets (except source sheet).
+    const linkRaw = (cleaned._LINK ?? '').toString().trim();
+    if (linkRaw) {
+      const tokens = linkRaw
+        .split(/[;,|]/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+      const useAll = tokens.some((t) => t.toLowerCase() === '_all');
+      const linkedSheets: string[] = useAll
+        ? wb.SheetNames.filter((s) => s !== sheetName)
+        : Array.from(new Set(tokens));
+
+      for (const linkedSheet of linkedSheets) {
+        const linkedRow = pickRowFromSheet(linkedSheet);
+        if (!linkedRow) continue;
+
+        const linkedCleaned: Record<string, any> = {};
+        for (const [k, v] of Object.entries(linkedRow)) {
+          if (!k.startsWith('__') && k !== '_LINK') linkedCleaned[k] = v;
+        }
+
+        cleaned[linkedSheet] = linkedCleaned;
+      }
+    }
+
+    return cleaned;
+  }
+
+  if (ext === '.json') {
+    const parsed = JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
+    if (Array.isArray(parsed)) {
+      if (Number.isFinite(dataRowNum) && dataRowNum >= 1) {
+        // Prefer direct 1-based index for JSON arrays; fallback to data-row style index.
+        return parsed[dataRowNum - 1] ?? parsed[dataRowNum - 2] ?? null;
+      }
+      return parsed[0] ?? null;
+    }
+    if (parsed && typeof parsed === 'object') return parsed;
+  }
+
+  return null;
 }

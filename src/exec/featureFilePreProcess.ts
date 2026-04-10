@@ -166,11 +166,60 @@ function processExamplesWithFilter(
 
       const isNumeric = (val: any) =>
         typeof val === "string" && val.trim() !== "" && !isNaN(Number(val));
+      const escapeRegex = (input: string) =>
+        input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const expectsQuotedBoolean = (filterExpr: string, key: string) => {
+        const k = escapeRegex(key);
+        const direct = new RegExp(
+          `\\b${k}\\b\\s*(?:===|==|!==|!=)\\s*[\"'](?:true|false)[\"']`,
+          "i"
+        );
+        const reverse = new RegExp(
+          `[\"'](?:true|false)[\"']\\s*(?:===|==|!==|!=)\\s*\\b${k}\\b`,
+          "i"
+        );
+        return direct.test(filterExpr) || reverse.test(filterExpr);
+      };
+      const expectsBooleanLiteral = (filterExpr: string, key: string) => {
+        const k = escapeRegex(key);
+        const direct = new RegExp(
+          `\\b${k}\\b\\s*(?:===|==|!==|!=)\\s*(?:true|false)\\b`,
+          "i"
+        );
+        const reverse = new RegExp(
+          `\\b(?:true|false)\\b\\s*(?:===|==|!==|!=)\\s*\\b${k}\\b`,
+          "i"
+        );
+        return direct.test(filterExpr) || reverse.test(filterExpr);
+      };
+      const toFilterLiteral = (filterExpr: string, key: string, raw: any) => {
+        if (raw === undefined || raw === null) return "undefined";
+        const boolLike =
+          typeof raw === "boolean" ||
+          (typeof raw === "string" && /^(true|false)$/i.test(raw.trim()));
+        if (boolLike) {
+          const asBool =
+            typeof raw === "boolean"
+              ? raw
+              : raw.trim().toLowerCase() === "true";
+          if (expectsQuotedBoolean(filterExpr, key)) {
+            return JSON.stringify(String(asBool));
+          }
+          if (expectsBooleanLiteral(filterExpr, key)) {
+            return asBool ? "true" : "false";
+          }
+          return asBool ? "true" : "false";
+        }
+        if (isNumeric(raw)) {
+          return String(raw).trim();
+        }
+        return JSON.stringify(raw);
+      };
       const substituteFilter = (filter: string, row: Record<string, any>) =>
         filter.replace(/\b[_a-zA-Z][_a-zA-Z0-9]*\b/g, (key) => {
           const raw = row[key] ?? row[`_${key}`];
           if (raw === undefined) return key;
-          return isNumeric(raw) ? raw.trim() : JSON.stringify(raw);
+          return toFilterLiteral(filter, key, raw);
         });
 
       let rows: Record<string, any>[] = [];
@@ -186,17 +235,22 @@ function processExamplesWithFilter(
         console.log(`📄 Workbook sheets: ${workbook.SheetNames.join(", ")}`);
         const sheet = sheetName || workbook.SheetNames[0];
         console.log(`📋 Using sheet: ${sheet}`);
-        const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheet]);
+        const sheetData = xlsx.utils.sheet_to_json(workbook.Sheets[sheet]) as Record<string, any>[];
         console.log(`🔢 Read ${sheetData.length} rows from sheet`);
-        rows = sheetData.filter((row) => {
+        for (let idx = 0; idx < sheetData.length; idx++) {
+          const row = sheetData[idx];
           try {
             console.log("🔍 Row raw:", row);
-            return eval(substituteFilter(filter, row));
+            if (eval(substituteFilter(filter, row))) {
+              // __rowNum__ is 0-based sheet row index; +1 gives 1-based Excel row number
+              const fileRow =
+                typeof row.__rowNum__ === "number" ? row.__rowNum__ + 1 : idx + 2;
+              rows.push({ ...row, _DATAROW: String(fileRow) });
+            }
           } catch {
             console.warn("⚠️ Row filter error, skipping.");
-            return false;
           }
-        });
+        }
       } else if (ext === ".csv") {
         console.log(`📋 ENTER CSV:`);
         const csvData = fs.readFileSync(fullPath, "utf-8").split("\n");
@@ -211,7 +265,10 @@ function processExamplesWithFilter(
             row[h] = values[j]?.trim();
           });
           try {
-            if (eval(substituteFilter(filter, row))) rows.push(row);
+            if (eval(substituteFilter(filter, row))) {
+              // csvData[0] is headers = file line 1; csvData[i] = file line i+1
+              rows.push({ ...row, _DATAROW: String(i + 1) });
+            }
           } catch {}
         }
       } else {
@@ -227,10 +284,23 @@ function processExamplesWithFilter(
         );
       }
 
-      const headers = Object.keys(rows[0]);
+      const dataFileValue = fullPath.replace(/\\/g, "/");
+      const dataSheetValue = ext === ".xlsx" && sheetName ? String(sheetName) : "";
+      const META_COLS = new Set(["_DATAFILE", "_DATASHEET", "_DATAROW"]);
+      // Strip xlsx-internal keys (e.g. __rowNum__) and meta cols from data columns
+      const dataKeys = Object.keys(rows[0]).filter(
+        (h) => !META_COLS.has(h) && !h.startsWith("__")
+      );
+      const headers = ["_DATAFILE", "_DATASHEET", "_DATAROW", ...dataKeys];
       const lines = ["\n\nExamples:", `  | ${headers.join(" | ")} |`];
       for (const r of rows) {
-        const rowLine = `  | ${headers.map((h) => r[h] || "").join(" | ")} |`;
+        const rowWithMeta: Record<string, string> = {
+          _DATAFILE: dataFileValue,
+          _DATASHEET: dataSheetValue,
+          _DATAROW: r._DATAROW ?? "",
+          ...Object.fromEntries(dataKeys.map((k) => [k, String(r[k] ?? "")])),
+        };
+        const rowLine = `  | ${headers.map((h) => rowWithMeta[h] ?? "").join(" | ")} |`;
         lines.push(rowLine);
       }
       return lines.join("\n");

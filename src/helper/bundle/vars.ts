@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { evaluateFakerExpression } from "../faker/fakerResolver";
 
 let importedVars: Record<string, string> = {};
 
@@ -10,6 +11,28 @@ const patternDirs = [
 
 const storedVars: Record<string, string> = {};
 const loggedMissingKeys = new Set<string>();
+const resolvingKeys = new Set<string>();
+let runtimeDataRow: Record<string, any> | null = null;
+
+function setRuntimeDataRow(row: Record<string, any> | null): void {
+  runtimeDataRow = row;
+  (globalThis as any).playqCurrentDataRowLive = row;
+}
+
+function finalizeValue(key: string, value: any): string {
+  const strValue = value === undefined || value === null ? "" : String(value);
+  if (!strValue.includes("#{")) return strValue;
+
+  // Guard against recursive references like A -> #{B}, B -> #{A}
+  if (resolvingKeys.has(key)) return strValue;
+
+  resolvingKeys.add(key);
+  try {
+    return replaceVariables(strValue);
+  } finally {
+    resolvingKeys.delete(key);
+  }
+}
 
 function getValue(key: string, ifEmpty?: boolean): string {
   if (!key) {
@@ -24,10 +47,35 @@ function getValue(key: string, ifEmpty?: boolean): string {
     if (!envValue) {
       return ifEmpty ? "" : key;
     }
-    return envValue;
+    return finalizeValue(key, envValue);
   }
 
-  if (key in storedVars) return (ifEmpty && storedVars[key] === key) ? "" : storedVars[key];
+  if (key.startsWith("data.")) {
+    const dataKey = key.slice(5);
+    const activeRow = runtimeDataRow || (globalThis as any).playqCurrentDataRowLive || null;
+    if (activeRow) {
+      // Support both flat keys ("fName") and dot-path nested keys ("Page_1.Col_8")
+      const segments = dataKey.split('.');
+      let node: any = activeRow;
+      for (const seg of segments) {
+        if (node !== null && node !== undefined && typeof node === 'object' && Object.prototype.hasOwnProperty.call(node, seg)) {
+          node = node[seg];
+        } else {
+          node = undefined;
+          break;
+        }
+      }
+      if (node !== undefined) {
+        return finalizeValue(key, node);
+      }
+    }
+    return ifEmpty ? "" : key;
+  }
+
+  if (key in storedVars) {
+    if (ifEmpty && storedVars[key] === key) return "";
+    return finalizeValue(key, storedVars[key]);
+  }
 
   // Only log when this is not an existence check
   if (!ifEmpty && !loggedMissingKeys.has(key)) {
@@ -37,6 +85,7 @@ function getValue(key: string, ifEmpty?: boolean): string {
 
   return ifEmpty ? "" : key;
 }
+
 
 function getConfigValue(key: string, ifEmpty?: boolean): string {
   // Support environment variable overrides using PLAYQ__ dotted path mapping.
@@ -134,6 +183,17 @@ function replaceVariables(input: any): string {
       }
     }
     
+    if (varName.startsWith("faker.")) {
+      try {
+        const fakerVal = evaluateFakerExpression(varName);
+        if (fakerVal === undefined || fakerVal === null) return "";
+        return typeof fakerVal === "object" ? JSON.stringify(fakerVal) : String(fakerVal);
+      } catch (error: any) {
+        console.warn(`Warning: Could not evaluate faker value '${varName}':`, error?.message || error);
+        return varName;
+      }
+    }
+
     if (varName.endsWith(".(toNumber)")) {
       const baseVar = varName.replace(".(toNumber)", "");
       const value = getValue(baseVar);
@@ -361,6 +421,7 @@ export {
   getValue,
   getConfigValue,
   setValue,
+  setRuntimeDataRow,
   replaceVariables,
   debugVars,
   parseLooseJson,

@@ -1,6 +1,6 @@
 {
   "name": "@playq/core",
-  "version": "0.2.94",
+  "version": "0.3.3",
   "description": "PlayQ Core (Phase 1) - raw TypeScript sources only.",
   "files": [
     "bin",
@@ -30,6 +30,7 @@
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
     "@faker-js/faker": "^9.6.0",
+    "ajv": "^8.0.0",
     "allure-js-commons": "^2.14.0",
     "axios": "^1.10.0",
     "clipboardy": "^4.0.0",
@@ -41,8 +42,7 @@
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
     "winston": "^3.8.2",
-    "yargs": "^18.0.0",
-    "ajv": "^8.0.0"
+    "yargs": "^18.0.0"
   },
   "keywords": [
     "playwright",

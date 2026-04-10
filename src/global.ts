@@ -10,6 +10,7 @@ import * as comm from './helper/actions/commActions';
 import * as web from './helper/actions/webActions';
 import * as api from './helper/actions/apiActions';
 import { dataTest } from './helper/util/test-data/dataTest';
+import { getTestData, getRowByMeta, resolveDataPath, parseCsvLine } from './helper/util/test-data/dataLoader';
 
 const addons: any = (() => {
   const root = process.env.PLAYQ_PROJECT_ROOT || process.cwd();
@@ -100,6 +101,11 @@ globalThis.comm = comm;
 globalThis.web = web;
 globalThis.api = api;
 globalThis.dataTest = dataTest;
+// Data loader utilities for accessing test data files
+globalThis.getTestData = getTestData;
+globalThis.getRowByMeta = getRowByMeta;
+globalThis.resolveDataPath = resolveDataPath;
+globalThis.parseCsvLine = parseCsvLine;
 // Build and expose 'loc' namespace; prefer folder auto-discovery to avoid requiring an index file
 (() => {
   try {
@@ -127,4 +133,4 @@ globalThis.engines = engines;
 let loc: any;
 try { loc = (globalThis as any).loc || getLocNamespace() || {}; } catch { loc = {}; }
 
-export { vars, webLocResolver, webFixture, logFixture, utils, faker, comm, web, api, dataTest, addons, engines, config, loc };
+export { vars, webLocResolver, webFixture, logFixture, utils, faker, comm, web, api, dataTest, addons, engines, config, loc, getTestData, getRowByMeta, resolveDataPath, parseCsvLine };
