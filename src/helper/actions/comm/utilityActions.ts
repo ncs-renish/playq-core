@@ -361,7 +361,7 @@ export async function wait(ms: number) {
  * Comm: Process PowerShell Template -templateName: "db_setup" -options: '{"run": true}'
  */
 export async function processPowerShellTemplate(templateName: string, options?: string | Record<string, any>): Promise<any> {
-  const { PsTemplateProcessor } = await import('../../util/powershell/psTemplateProcessor');
+  const { PsTemplateProcessor } = await import('../../util/powershell/psTemplateProcessor.js');
   let options_json: any = {};
 
   if (typeof options === 'string') {

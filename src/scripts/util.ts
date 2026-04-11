@@ -1,6 +1,5 @@
 import * as readline from 'readline';
 import { comm, vars } from "../global";
-import * as clipboardy from 'clipboardy';
 import * as crypto from 'crypto';
 import { TOTPHelper } from '../helper/util/totp/totpHelper';
 import * as fs from 'node:fs';
@@ -124,6 +123,7 @@ export async function encryptUserInput(): Promise<void> {
 
 async function copyToClipboard(text: string, description: string): Promise<void> {
   try {
+    const clipboardy = await import('clipboardy');
     await clipboardy.default.write(text);
     console.log(`✅ ${description} copied to clipboard!`);
     console.log(`📋 Copied: ${text.length > 50 ? text.substring(0, 50) + '...' : text}`);
