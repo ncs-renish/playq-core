@@ -1,6 +1,8 @@
 // src/helper/loc/locatorResolver.ts
 import type { Page, Locator } from "playwright";
 import * as vars from "../bundle/vars";
+import * as path from "path";
+import * as fs from "fs";
 // Access project-provided engines dynamically at call time to avoid module init ordering issues
 function getEngines(): any { return (globalThis as any).engines || {}; }
 // import { smartAI} from "@project/engines/smartAi/smartAiEngine";
@@ -62,23 +64,38 @@ export async function webLocResolver(
       const [, locType, pageName, fieldName] = parts;
         if (selector.startsWith("loc.json.")) {
         const [, , fileName, pageName, fieldName] = selector.split(".");
-        const jsonLocatorMap = await import(
-          `@resources/locators/json/${fileName}.json`
-        );
-        const pageObj = jsonLocatorMap?.[pageName];
-        if (!pageObj)
+        // Resolve JSON locator path using PLAYQ_PROJECT_ROOT instead of alias
+        const projectRoot = process.env.PLAYQ_PROJECT_ROOT || process.cwd();
+        const jsonLocatorPath = path.resolve(projectRoot, `resources/locators/json/${fileName}.json`);
+        
+        if (!fs.existsSync(jsonLocatorPath)) {
           throw new Error(
-            `❌ Page "${pageName}" not found in ${fileName}.json`
+            `❌ JSON locator file not found: ${jsonLocatorPath}`
           );
-        const locatorString = pageObj[fieldName];
-        if (!locatorString)
+        }
+        
+        try {
+          const jsonContent = fs.readFileSync(jsonLocatorPath, 'utf-8');
+          const jsonLocatorMap = JSON.parse(jsonContent);
+          const pageObj = jsonLocatorMap?.[pageName];
+          if (!pageObj)
+            throw new Error(
+              `❌ Page "${pageName}" not found in ${fileName}.json`
+            );
+          const locatorString = pageObj[fieldName];
+          if (!locatorString)
+            throw new Error(
+              `❌ Field "${fieldName}" not found in ${fileName}.json[${pageName}]`
+            );
+          console.log(
+            `🧩 Resolved locator string from loc.json.${fileName}.${pageName}.${fieldName} -> ${locatorString}`
+          );
+          return page.locator(await vars.replaceVariables(locatorString));
+        } catch (err: any) {
           throw new Error(
-            `❌ Field "${fieldName}" not found in ${fileName}.json[${pageName}]`
+            `❌ Failed to resolve JSON locator from ${fileName}.json: ${err.message}`
           );
-        console.log(
-          `🧩 Resolved locator string from loc.json.${fileName}.${pageName}.${fieldName} -> ${locatorString}`
-        );
-        return page.locator(await vars.replaceVariables(locatorString));
+        }
       }
 
       if (selector.startsWith("loc.ts.")) {

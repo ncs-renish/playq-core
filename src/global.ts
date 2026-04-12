@@ -123,7 +123,18 @@ globalThis.parseCsvLine = parseCsvLine;
     const locNs = mod.default && typeof mod.default === 'object' ? { ...mod.default, ...mod } : mod;
     (globalThis as any).loc = locNs;
   } catch (e: any) {
-    console.warn('⚠️ Unable to initialize loc namespace (no folder matches or alias module):', e?.message || e);
+    // Secondary fallback: try resolving via project root directly
+    try {
+      const path = require('path');
+      const projectRoot = process.env.PLAYQ_PROJECT_ROOT || process.cwd();
+      const locIndexPath = path.resolve(projectRoot, 'resources/locators');
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const mod = require(locIndexPath);
+      const locNs = mod.default && typeof mod.default === 'object' ? { ...mod.default, ...mod } : mod;
+      (globalThis as any).loc = locNs;
+    } catch (fallbackErr: any) {
+      console.warn('⚠️ Unable to initialize loc namespace (no folder matches or alias module):', e?.message || e);
+    }
   }
 })();
 globalThis.addons = addons;
