@@ -1,6 +1,7 @@
 import type { Browser, BrowserContext, Page, Frame } from "playwright";
 import { Logger } from "winston";
 import { invokeBrowser } from "../browsers/browserManager";
+import * as vars from "../bundle/vars";
 // Inline runner detection to avoid external alias dependency
 function isPlaywrightRunner() { return process.env.TEST_RUNNER === 'playwright'; }
 
@@ -39,6 +40,31 @@ export const webFixture = {
     pages.set(name, page);
     currentPage = page;
     currentPageName = name;
+    
+    // Apply maximize option if configured
+    const shouldMaximize = vars.getConfigValue('browser.maximize');
+    if (shouldMaximize || (typeof shouldMaximize === 'string' && shouldMaximize.toLowerCase() === 'true')) {
+      let viewportConfig: any = vars.getConfigValue('browser.viewport') || { width: 1920, height: 1080 };
+      
+      // If viewportConfig is a JSON string, parse it
+      if (typeof viewportConfig === 'string') {
+        try {
+          viewportConfig = JSON.parse(viewportConfig);
+        } catch (err: any) {
+          console.warn(`⚠️ Failed to parse viewport config: ${err.message}. Using defaults.`);
+          viewportConfig = { width: 1920, height: 1080 };
+        }
+      }
+      
+      const { width = 1920, height = 1080 } = viewportConfig;
+      try {
+        await page.setViewportSize({ width, height });
+        console.log(`✅ Viewport maximized to ${width}x${height}`);
+      } catch (err: any) {
+        console.warn(`⚠️ Failed to maximize viewport: ${err.message}`);
+      }
+    }
+    
     return page;
   },
   getBrowser() {
