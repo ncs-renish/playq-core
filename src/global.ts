@@ -87,25 +87,27 @@ const config: any = (() => {
 const testType = process.env.TEST_TYPE;
 const allowedTypes = ['ui', 'api', 'mobile'] as const;
 
-globalThis.runType = allowedTypes.includes(testType as any)
+const g: any = globalThis as any;
+
+g.runType = allowedTypes.includes(testType as any)
   ? (testType as typeof allowedTypes[number])
   : 'ui';
 
-globalThis.vars = vars;
-globalThis.webLocResolver = webLocResolver;
-globalThis.uiFixture = webFixture;
-globalThis.logFixture = logFixture;
-globalThis.utils = utils;
-globalThis.faker = faker;
-globalThis.comm = comm;
-globalThis.web = web;
-globalThis.api = api;
-globalThis.dataTest = dataTest;
+g.vars = vars;
+g.webLocResolver = webLocResolver;
+g.uiFixture = webFixture;
+g.logFixture = logFixture;
+g.utils = utils;
+g.faker = faker;
+g.comm = comm;
+g.web = web;
+g.api = api;
+g.dataTest = dataTest;
 // Data loader utilities for accessing test data files
-globalThis.getTestData = getTestData;
-globalThis.getRowByMeta = getRowByMeta;
-globalThis.resolveDataPath = resolveDataPath;
-globalThis.parseCsvLine = parseCsvLine;
+g.getTestData = getTestData;
+g.getRowByMeta = getRowByMeta;
+g.resolveDataPath = resolveDataPath;
+g.parseCsvLine = parseCsvLine;
 // Build and expose 'loc' namespace; prefer folder auto-discovery to avoid requiring an index file
 (() => {
   try {
@@ -137,8 +139,8 @@ globalThis.parseCsvLine = parseCsvLine;
     }
   }
 })();
-globalThis.addons = addons;
-globalThis.engines = engines;
+g.addons = addons;
+g.engines = engines;
 
 // Export a stable 'loc' binding for consumers: import { loc } from '@playq/core'
 let loc: any;
