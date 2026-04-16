@@ -1,7 +1,11 @@
 import fs from 'fs';
 
-const inputPath = 'test-results/cucumber-report.json';
-const outputPath = 'test-results/cucumber-report-custom.json';
+import * as path from 'path';
+
+// Use PLAYQ_RESULTS_DIR if set (from pretest), otherwise default to test-results
+const RESULTS_DIR = process.env.PLAYQ_RESULTS_DIR || 'test-results';
+const inputPath = path.join(RESULTS_DIR, 'cucumber-report.json');
+const outputPath = path.join(RESULTS_DIR, 'cucumber-report-custom.json');
 
 function extractReplacements(embeddings: any[]): Record<string, string> {
   const replacements: Record<string, string> = {};
@@ -42,7 +46,7 @@ function processReport() {
         if (
           Array.isArray(step.embeddings) &&
           step.embeddings.some(
-            (embed) =>
+            (embed: any) =>
               typeof embed.data === "string" &&
               embed.data.includes("Soft Assertion: [Failed]")
           )

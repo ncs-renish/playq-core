@@ -2,6 +2,7 @@ import type { Browser, BrowserContext, Page, Frame } from "playwright";
 import { Logger } from "winston";
 import { invokeBrowser } from "../browsers/browserManager";
 import * as vars from "../bundle/vars";
+import * as path from "path";
 // Inline runner detection to avoid external alias dependency
 function isPlaywrightRunner() { return process.env.TEST_RUNNER === 'playwright'; }
 
@@ -28,7 +29,7 @@ export const webFixture = {
     if (!options) {
         options = {
             recordVideo: {
-            dir: "test-results/videos",
+            dir: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'videos'),
             },
         };
     }   
@@ -94,7 +95,7 @@ export const webFixture = {
           try {
             // If tracing is on, stop and save
             if (context.tracing && context.tracing.stop) {
-              await context.tracing.stop({ path: `test-results/trace/trace.zip` });
+              await context.tracing.stop({ path: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'trace', 'trace.zip') });
             }
             await page.close();
           } catch (err) {

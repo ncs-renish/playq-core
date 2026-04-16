@@ -1,6 +1,7 @@
 import { spawnSync, execSync, spawn } from 'child_process';
 import minimist from 'minimist';
 import { loadEnv } from '../helper/bundle/env';
+import { initRun, updateRunStatus } from '../scripts/pretest';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
@@ -171,28 +172,7 @@ function rerunPlaywrightFailed(failedTests: any[]): void {
   saveFailedTestsIfAny(exitCode);
 }
 
-/**
- * Clean up test-results directory before running tests
- */
-function cleanupTestResults(): void {
-  // Skip cleanup during rerun operations - we need to preserve original results
-  if (process.env.PLAYQ_IS_RERUN === 'true') {
-    console.log('ℹ️  Skipping cleanup (rerun in progress)');
-    return;
-  }
-
-  const projectRoot = process.env.PLAYQ_PROJECT_ROOT || process.cwd();
-  const testResultsDir = path.join(projectRoot, 'test-results');
-  
-  if (fs.existsSync(testResultsDir)) {
-    try {
-      fs.rmSync(testResultsDir, { recursive: true, force: true });
-      console.log('🧹 Cleaned up test-results directory');
-    } catch (error) {
-      console.log('⚠️ Failed to clean test-results:', (error as any)?.message || error);
-    }
-  }
-}
+// cleanupTestResults() removed — run directory initialisation is now handled by initRun() from pretest.ts
 
 // loadEnv();
 // console.log('  - Runner (PLAYQ_ENV):', process.env.PLAYQ_ENV );
@@ -229,8 +209,8 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
   if (cliEnv && !process.env.PLAYQ_ENV) process.env.PLAYQ_ENV = cliEnv;
   if (cliProject && !process.env.PLAYQ_PROJECT) process.env.PLAYQ_PROJECT = cliProject;
   
-  // Clean up test results before running
-  cleanupTestResults();
+  // Initialise timestamped run directory (sets PLAYQ_RESULTS_DIR)
+  initRun();
 
   const cucumberArgs = [
     'cucumber-js',
@@ -260,12 +240,8 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
   });
 
   run.on('close', (code, signal) => {
-    // Removed automatic posttest:cucumber call
-    // User should manually run: npx playq merge-reports
-    // This allows full control over when and how reports are merged
-
-    // Convert code/signal to exit code: null code with signal is a failure
     const exitCode = code ?? (signal ? 1 : 0);
+    updateRunStatus(exitCode);
     // Always save failed tests for potential manual rerun
     saveFailedTestsIfAny(exitCode);
   });
@@ -279,8 +255,8 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
     
     let overallExitCode = 0;
     
-    // Clean test-results ONCE before all iterations (allow results to accumulate across runs)
-    cleanupTestResults();
+    // Initialise timestamped run directory ONCE before all iterations (sets PLAYQ_RESULTS_DIR)
+    initRun();
     
     for (const cfg of runConfig.runs) {
       console.log(`    - Running test with grep: ${cfg.PLAYQ_GREP}, env: ${cfg.PLAYQ_ENV}`);
@@ -297,6 +273,8 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
   const childEnv = { ...process.env } as any;
       // Ensure child initializes vars by removing the parent-side guard
       delete childEnv.PLAYQ_NO_INIT_VARS;
+      // Prevent playwright.config.ts from running pretest again
+      childEnv.PLAYQ_PRETEST_LOADED = '1';
   const preload = '-r ts-node/register';
       childEnv.NODE_OPTIONS = childEnv.NODE_OPTIONS
         ? `${childEnv.NODE_OPTIONS} ${preload}`
@@ -330,12 +308,13 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
 
     // Always save failed tests for potential manual rerun
     saveFailedTestsIfAny(overallExitCode);
+    updateRunStatus(overallExitCode);
   } else {
   process.env.PLAYQ_NO_INIT_VARS = '1';
   loadEnv();
   
-  // Clean up test results before running
-  cleanupTestResults();
+  // Initialise timestamped run directory (sets PLAYQ_RESULTS_DIR)
+  initRun();
 
   const command = `npx playwright test --config=playq/config/playwright/playwright.config.js${process.env.PLAYQ_GREP ? ` --grep="${process.env.PLAYQ_GREP}"` : ''
       }${process.env.PLAYQ_PROJECT ? ` --project="${process.env.PLAYQ_PROJECT}"` : ''}`;
@@ -343,6 +322,9 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
   const childEnv = { ...process.env } as any;
     // Ensure child initializes vars by removing the parent-side guard
     delete childEnv.PLAYQ_NO_INIT_VARS;
+    // Prevent playwright.config.ts from running pretest again — run directory already
+    // initialised above via initRun() and PLAYQ_RESULTS_DIR is already set.
+    childEnv.PLAYQ_PRETEST_LOADED = '1';
   const preload = '-r ts-node/register';
     childEnv.NODE_OPTIONS = childEnv.NODE_OPTIONS
       ? `${childEnv.NODE_OPTIONS} ${preload}`
@@ -362,7 +344,9 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
 
     // Always save failed tests for potential manual rerun
     console.log(`\n📋 Test execution completed with exit code: ${result.status ?? 1}`);
-    saveFailedTestsIfAny(result.status ?? 1);
+    const pwExitCode = result.status ?? 1;
+    updateRunStatus(pwExitCode);
+    saveFailedTestsIfAny(pwExitCode);
   }
 
 }
