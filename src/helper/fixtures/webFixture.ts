@@ -27,12 +27,28 @@ export const webFixture = {
   },
   async newContext(options?: Parameters<Browser["newContext"]>[0]) {
     if (!options) {
-        options = {
-            recordVideo: {
-            dir: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'videos'),
-            },
-        };
-    }   
+      options = {
+        recordVideo: {
+          dir: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'videos'),
+        },
+      };
+    }
+
+    const shouldMaximize = vars.getConfigValue('browser.maximize');
+    const isMaximize = String(shouldMaximize).toLowerCase() === 'true';
+    const headlessConfig = vars.getConfigValue('browser.headless');
+    const isHeadless = String(headlessConfig).toLowerCase() !== 'false';
+
+    // Matrix for cucumber contexts:
+    // headed + maximize true  => viewport null (real window size)
+    // headless + maximize true => deterministic fallback
+    // maximize false => keep configured viewport behavior (applied in newPage)
+    if (isMaximize && !isHeadless) {
+      (options as any).viewport = null;
+    } else if (isMaximize && isHeadless) {
+      (options as any).viewport = { width: 1920, height: 1080 };
+    }
+
     context = await browser.newContext(options);
     return context;
   },
@@ -41,29 +57,61 @@ export const webFixture = {
     pages.set(name, page);
     currentPage = page;
     currentPageName = name;
-    
-    // Apply maximize option if configured
+
+    // Align with Playwright spec config behavior:
+    // - If browser.maximize=true: ignore browser.viewport and force 1920x1080
+    // - Else: use custom viewport with normal defaults (1480x720)
     const shouldMaximize = vars.getConfigValue('browser.maximize');
-    if (shouldMaximize || (typeof shouldMaximize === 'string' && shouldMaximize.toLowerCase() === 'true')) {
-      let viewportConfig: any = vars.getConfigValue('browser.viewport') || { width: 1920, height: 1080 };
-      
-      // If viewportConfig is a JSON string, parse it
-      if (typeof viewportConfig === 'string') {
-        try {
-          viewportConfig = JSON.parse(viewportConfig);
-        } catch (err: any) {
-          console.warn(`⚠️ Failed to parse viewport config: ${err.message}. Using defaults.`);
-          viewportConfig = { width: 1920, height: 1080 };
-        }
-      }
-      
-      const { width = 1920, height = 1080 } = viewportConfig;
+    const isMaximize = String(shouldMaximize).toLowerCase() === 'true';
+
+    const headlessConfig = vars.getConfigValue('browser.headless');
+    const isHeadless = String(headlessConfig).toLowerCase() !== 'false';
+
+    if (isMaximize && !isHeadless) {
+      // Headed maximize uses viewport:null from context; no per-page override.
+      console.log('✅ Viewport using browser window size (headed maximize mode)');
+      return page;
+    }
+
+    if (isMaximize && isHeadless) {
       try {
-        await page.setViewportSize({ width, height });
-        console.log(`✅ Viewport maximized to ${width}x${height}`);
+        await page.setViewportSize({ width: 1920, height: 1080 });
+        console.log('✅ Viewport set to 1920x1080 (headless maximize mode)');
       } catch (err: any) {
-        console.warn(`⚠️ Failed to maximize viewport: ${err.message}`);
+        console.warn(`⚠️ Failed to set viewport: ${err.message}`);
       }
+      return page;
+    }
+
+    const rawViewport = vars.getConfigValue('browser.viewport');
+    const rawWidth = Number(vars.getConfigValue('browser.viewport.width', true));
+    const rawHeight = Number(vars.getConfigValue('browser.viewport.height', true));
+
+    let parsedViewport: any = null;
+    if (typeof rawViewport === 'object' && rawViewport) {
+      parsedViewport = rawViewport;
+    } else if (typeof rawViewport === 'string' && rawViewport.trim() && !rawViewport.startsWith('config.')) {
+      try {
+        parsedViewport = JSON.parse(rawViewport);
+      } catch {
+        // Ignore parse issues and fallback to flattened keys/defaults.
+      }
+    }
+
+    const defaultWidth = 1480;
+    const defaultHeight = 720;
+
+    const width = Number(parsedViewport?.width ?? rawWidth);
+    const height = Number(parsedViewport?.height ?? rawHeight);
+
+    const resolvedWidth = Number.isFinite(width) && width > 0 ? width : defaultWidth;
+    const resolvedHeight = Number.isFinite(height) && height > 0 ? height : defaultHeight;
+
+    try {
+      await page.setViewportSize({ width: resolvedWidth, height: resolvedHeight });
+      console.log(`✅ Viewport set to ${resolvedWidth}x${resolvedHeight}`);
+    } catch (err: any) {
+      console.warn(`⚠️ Failed to set viewport: ${err.message}`);
     }
     
     return page;

@@ -7,6 +7,96 @@ import path from 'path';
 import fs from 'fs';
 import { extractFailedTests, createCucumberRerunFile, createPlaywrightRerunFile } from './rerunExtractor';
 // Note: remove stray invalid import; runner does not need faker
+import { vars } from '../global';
+
+function readAutoReportOpenFromProjectConfig(): boolean | undefined {
+  const projectRoot = process.cwd();
+  const candidates = [
+    path.join(projectRoot, 'resources', 'config.ts'),
+    path.join(projectRoot, 'resources', 'config.js'),
+  ];
+
+  for (const cfgPath of candidates) {
+    try {
+      if (!fs.existsSync(cfgPath)) continue;
+      const content = fs.readFileSync(cfgPath, 'utf-8');
+      const match = content.match(/autoReportOpen\s*:\s*(true|false)/);
+      if (match) return match[1] === 'true';
+    } catch {
+      // Ignore and continue to next candidate.
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Determine if report should auto-open after test completion
+ * Logic:
+ *   - If config.testExecution.autoReportOpen === true → always open (CLI flag ignored)
+ *   - If config.testExecution.autoReportOpen === false → open only if --open-report CLI flag passed
+ */
+function shouldAutoOpenReport(): boolean {
+  // Option B explicit override always wins.
+  if (process.env.PLAYQ_OPEN_REPORT === 'true') {
+    return true;
+  }
+
+  // Env override (PLAYQ__ path mapping) should be honored before config lookup.
+  if (process.env.PLAYQ__testExecution__autoReportOpen) {
+    return process.env.PLAYQ__testExecution__autoReportOpen.toLowerCase() === 'true';
+  }
+
+  try {
+    const autoReportConfig = vars.getConfigValue('testExecution.autoReportOpen') as any;
+
+    // In some flows vars may not be hydrated in this parent process and
+    // getConfigValue returns unresolved token (e.g. "config.testExecution.autoReportOpen").
+    if (typeof autoReportConfig === 'string' && autoReportConfig.startsWith('config.')) {
+      const parsed = readAutoReportOpenFromProjectConfig();
+      if (typeof parsed === 'boolean') return parsed;
+      return true;
+    }
+
+    if (autoReportConfig === true || String(autoReportConfig).toLowerCase() === 'true') {
+      return true;
+    }
+
+    if (autoReportConfig === false || String(autoReportConfig).toLowerCase() === 'false') {
+      return false;
+    }
+
+    // Default-safe behavior: open report unless explicitly disabled.
+    const parsed = readAutoReportOpenFromProjectConfig();
+    if (typeof parsed === 'boolean') return parsed;
+    return true;
+  } catch {
+    const parsed = readAutoReportOpenFromProjectConfig();
+    if (typeof parsed === 'boolean') return parsed;
+    // If config fails to load, keep report auto-open enabled by default.
+    return true;
+  }
+}
+
+/**
+ * Open the HTML report for the last completed run
+ * Spawns: npx playq report
+ */
+function openReport(): void {
+  try {
+    console.log('\n📊 Opening HTML report...');
+    const result = spawnSync('npx', ['playq', 'report'], {
+      stdio: 'inherit',
+      shell: true,
+      cwd: process.cwd()
+    });
+    if (result.error) {
+      console.error(`❌ Failed to open report: ${result.error.message}`);
+    }
+  } catch (err) {
+    console.error(`❌ Error opening report: ${err}`);
+  }
+}
 
 /**
  * Check if user wants to rerun failed tests from previous run
@@ -242,6 +332,10 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
   run.on('close', (code, signal) => {
     const exitCode = code ?? (signal ? 1 : 0);
     updateRunStatus(exitCode);
+    // Open report if configured
+    if (shouldAutoOpenReport()) {
+      openReport();
+    }
     // Always save failed tests for potential manual rerun
     saveFailedTestsIfAny(exitCode);
   });
@@ -306,9 +400,13 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
 
     }
 
+    updateRunStatus(overallExitCode);
+    // Open report if configured
+    if (shouldAutoOpenReport()) {
+      openReport();
+    }
     // Always save failed tests for potential manual rerun
     saveFailedTestsIfAny(overallExitCode);
-    updateRunStatus(overallExitCode);
   } else {
   process.env.PLAYQ_NO_INIT_VARS = '1';
   loadEnv();
@@ -346,6 +444,10 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
     console.log(`\n📋 Test execution completed with exit code: ${result.status ?? 1}`);
     const pwExitCode = result.status ?? 1;
     updateRunStatus(pwExitCode);
+    // Open report if configured
+    if (shouldAutoOpenReport()) {
+      openReport();
+    }
     saveFailedTestsIfAny(pwExitCode);
   }
 

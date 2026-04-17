@@ -41,15 +41,21 @@ export const invokeBrowser = () => {
 
   const headlessConfig = vars.getConfigValue('browser.headless');
   const isHeadless = String(headlessConfig).toLowerCase() === 'false' ? false : true;
-  const options = { headless: isHeadless };
+  const maximizeConfig = vars.getConfigValue('browser.maximize');
+  const isMaximize = String(maximizeConfig).toLowerCase() === 'true';
+
+  const baseOptions: any = { headless: isHeadless };
+  if (isMaximize && !isHeadless) {
+    baseOptions.args = ['--start-maximized'];
+  }
  
   switch (browserType) {
     case "chromium":
-      return chromium.launch(options);
+      return chromium.launch(baseOptions);
     case "firefox":
-      return firefox.launch(options);
+      return firefox.launch(baseOptions);
     case "webkit":
-      return webkit.launch(options);
+      return webkit.launch(baseOptions);
     default:
       throw new Error("Please set the proper browser!")
   }

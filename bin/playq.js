@@ -86,6 +86,23 @@ if (process.argv[2] === 'ps-template') {
 }
 
 
+// Handle 'report' command - open HTML report for a run from test-results/runs/
+if (process.argv[2] === 'report') {
+  // Show help inline if -h/--help and no other args
+  if (process.argv.includes('--help') || process.argv.includes('-h')) {
+    const { spawnSync } = require('child_process');
+    const reportScript = path.join(__dirname, '../dist/scripts/report.js');
+    process.env.PLAYQ_PROJECT_ROOT = process.cwd();
+    const result = spawnSync(process.execPath, [reportScript, '--help'], { stdio: 'inherit' });
+    process.exit(result.status || 0);
+  }
+  const { spawnSync } = require('child_process');
+  const reportScript = path.join(__dirname, '../dist/scripts/report.js');
+  process.env.PLAYQ_PROJECT_ROOT = process.cwd();
+  const result = spawnSync(process.execPath, [reportScript, ...process.argv.slice(3)], { stdio: 'inherit' });
+  process.exit(result.status || 0);
+}
+
 // Handle 'merge-reports' command - merges Playwright blob reports into unified HTML
 if (process.argv[2] === 'merge-reports') {
   const { spawnSync } = require('child_process');
@@ -104,7 +121,7 @@ if (process.argv[2] === 'test') {
 
   const args = minimist(process.argv.slice(3), {
     string: ['grep', 'tags', 'runner', 'project', 'env', 'filter', 'key'],
-    boolean: ['rerun'],
+    boolean: ['rerun', 'open-report'],
     alias: { g: 'grep', t: 'tags', r: 'runner', p: 'project', e: 'env', f: 'filter', k: 'key' }
   });
 
@@ -140,6 +157,8 @@ if (process.argv[2] === 'test') {
   if (args.env) process.env.PLAYQ_ENV = args.env;
   // Support --rerun flag to rerun failed tests (manual reruns, without automatic merge)
   if (args.rerun) process.env.PLAYQ_RERUN = 'true';
+  // Support --open-report flag to force open report after test completion (overrides config when autoReportOpen=false)
+  if (args['open-report']) process.env.PLAYQ_OPEN_REPORT = 'true';
 
   // --filter support: map to grep/tags based on runner
   if (args.filter) {
@@ -173,6 +192,7 @@ Usage: playq test [options]
   --env         | -e   Environment name (mapped to PLAYQ_ENV)
   --key         | -k   Secret key for crypto (sets PLAYQ_SECRET_KEY)
   --rerun            Rerun failed tests from previous run (manual rerun only)
+  --open-report      Open HTML report after test completion (overrides config if autoReportOpen=false)
 
   --help        | -h   Show help
   --version     | -v   Show PlayQ CLI version  
@@ -204,9 +224,11 @@ Usage: playq <command> [options]
 
 Commands:
   test                 Run PlayQ tests (Playwright or Cucumber)
+  util                 Run the PlayQ utility
+  report               Open HTML report for a run from test-results/runs/
                        Tests save failures automatically for manual rerun
   merge-reports        Merge test reports into unified HTML (manual, after test run)
-  util                 Run the PlayQ utility
+
   ps-template          Process PowerShell script templates
   generate --stepgroup | -sg   Generate step group cache and step defs
 
@@ -229,6 +251,7 @@ Examples:
   npx playq test --tags "@smoke" --runner cucumber
   npx playq test --rerun
   npx playq test --rerun --env staging
+  npx playq report
   npx playq merge-reports --open
   npx playq util
   npx playq util --help
