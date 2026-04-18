@@ -2,12 +2,15 @@ import { loadEnv } from '../helper/bundle/env';
 import path from 'path';
 import { rmSync, existsSync, unlinkSync, readdirSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'fs';
 
+type ReportType = 'playwright' | 'cucumber' | 'allure' | 'cucumber-multi';
+
 type RunMeta = {
   runId: string;
   runDir: string;
   startedAt: string;
   status: 'running' | 'completed' | 'failed';
   runType: 'bdd' | 'spec';
+  reports: ReportType[];
   isRerun: boolean;
   rerunCount?: number;
 };
@@ -108,12 +111,14 @@ function initRunDirectory(projectRoot: string, isActiveRerun: boolean): { runDir
     runId = makeRunId();
     runDir = path.resolve(runsRoot, runId);
     ensureDir(runDir);
+    const defaultReports: ReportType[] = runType === 'bdd' ? ['cucumber'] : ['playwright'];
     currentMeta = {
       runId,
       runDir: path.relative(testResultsRoot, runDir), // Store relative path
       startedAt: new Date().toISOString(),
       status: 'running',
       runType,
+      reports: defaultReports,
       isRerun: false,
       rerunCount: 0
     };

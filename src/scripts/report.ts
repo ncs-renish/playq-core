@@ -26,6 +26,7 @@ import { spawnSync } from 'child_process';
 
 type RunStatus = 'running' | 'completed' | 'failed';
 type RunType = 'bdd' | 'spec';
+type ReportType = 'playwright' | 'cucumber' | 'allure' | 'cucumber-multi';
 
 type RunMeta = {
   runId: string;
@@ -34,11 +35,17 @@ type RunMeta = {
   completedAt?: string;
   status: RunStatus;
   runType: RunType;
+  reports?: ReportType[];
   isRerun: boolean;
   rerunCount?: number;
 };
 
-type ReportType = 'cucumber' | 'playwright' | 'allure';
+const REPORT_PATHS: Record<ReportType, string> = {
+  playwright: 'playwright-report/index.html',
+  cucumber: 'cucumber-report.html',
+  allure: 'allure-report/index.html',
+  'cucumber-multi': 'cucumber-multi-report/index.html',
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Help Text
@@ -58,7 +65,7 @@ Selectors:
   <partial>                  Suffix match (e.g., "203859" matches "run-20260416-203859")
 
 Options:
-  --type cucumber|playwright  Override report type (default: auto from run metadata)
+  --type <type>               Override report type: playwright|cucumber|allure|cucumber-multi
   --list  | -l                List all available runs with status and offsets
   --help  | -h                Show this help message
 
@@ -103,7 +110,15 @@ function resolveAbsoluteRunDir(runMeta: RunMeta, testResultsRoot: string): strin
 
 function getReportPath(runMeta: RunMeta, testResultsRoot: string, typeOverride?: string): string {
   const runDir = resolveAbsoluteRunDir(runMeta, testResultsRoot);
-  const reportType: ReportType = (typeOverride as ReportType) || (runMeta.runType === 'bdd' ? 'cucumber' : 'playwright');
+
+  // Resolve which report type to open:
+  // 1. --type override from CLI
+  // 2. First entry in run.reports[] (recorded at run time)
+  // 3. Fallback: infer from runType (backward compat with old entries)
+  const reportType: ReportType =
+    (typeOverride as ReportType) ||
+    (runMeta.reports?.[0]) ||
+    (runMeta.runType === 'bdd' ? 'cucumber' : 'playwright');
 
   if (reportType === 'allure') {
     // TODO (v0.4.0): Allure support (requires `allure generate` to be run first)
@@ -111,12 +126,14 @@ function getReportPath(runMeta: RunMeta, testResultsRoot: string, typeOverride?:
     process.exit(1);
   }
 
-  if (reportType === 'cucumber') {
-    return path.join(runDir, 'cucumber-report.html');
+  if (reportType === 'cucumber-multi') {
+    // TODO (v0.4.0): cucumber-multi support
+    console.error('❌ cucumber-multi report opening is not yet supported. Coming in v0.4.0.');
+    process.exit(1);
   }
 
-  // playwright (default for spec runs)
-  return path.join(runDir, 'playwright-report', 'index.html');
+  const relativePath = REPORT_PATHS[reportType];
+  return path.join(runDir, relativePath);
 }
 
 function openFile(filePath: string): void {
@@ -147,15 +164,16 @@ function formatRunLine(run: RunMeta, index: number, total: number): string {
   const offsetFromEnd = total - 1 - index;
   const offsetLabel = offsetFromEnd === 0 ? '(last) ' : `(-${offsetFromEnd})   `;
   const statusIcon = run.status === 'completed' ? '✅' : run.status === 'failed' ? '❌' : '🔄';
+  const statusLabel = run.status.padEnd(9, ' ');
   const typeLabel = run.runType === 'bdd' ? 'cucumber  ' : 'playwright';
   const date = new Date(run.startedAt).toLocaleString();
-  return `  ${statusIcon}  ${run.runId}   ${typeLabel}   ${date}   ${offsetLabel}`;
+  return `${statusIcon}  ${run.runId}   ${statusLabel}   ${typeLabel}   ${date}   ${offsetLabel}`;
 }
 
 function listRuns(sorted: RunMeta[]): void {
   console.log('\n📋  PlayQ Run History\n');
-  console.log('       Run ID                      Type        Started                       Offset');
-  console.log('  ───────────────────────────────────────────────────────────────────────────────────');
+  console.log('    RUN ID                STATUS      TYPE         STARTED                 OFFSET');
+  console.log('─────────────────────────────────────────────────────────────────────────────────────────────');
   sorted.forEach((run, i) => {
     console.log(formatRunLine(run, i, sorted.length));
   });
