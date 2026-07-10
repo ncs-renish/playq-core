@@ -237,7 +237,7 @@ export function setupEnvironment() {
       const testResultsPath = runDir;
       if (existsSync(testResultsPath)) {
         // These are safe to remove - they're reports/artifacts
-        const safeToRemove = ['artifacts', 'cucumber-report.html', 'cucumber-report.json', 
+        const safeToRemove = ['artifacts', 'cucumber-report',
                               'playwright-report', 'screenshots', 'traces', 'videos', 'scenarios',
                               'e2e-junit-results.xml', 'logs'];
         safeToRemove.forEach(sub => {
@@ -347,6 +347,33 @@ export function updateRunStatus(exitCode: number): void {
   writeJsonAtomic(latestRunMetaPath, currentMeta);
   writeJsonAtomic(runIndexPath, updated);
   console.log(`📋 [pretest] Run ${currentMeta.runId} marked as ${currentMeta.status}`);
+}
+
+/**
+ * Append a report type to the reports[] array of the current run in both
+ * current-run.json and runs-index.json. Called after a report is generated.
+ */
+export function registerRunReport(reportType: ReportType): void {
+  const projectRoot = process.env['PLAYQ_PROJECT_ROOT'] || process.cwd();
+  const testResultsRoot = path.resolve(projectRoot, 'test-results');
+  const latestRunMetaPath = path.resolve(testResultsRoot, 'current-run.json');
+  const runIndexPath = path.resolve(testResultsRoot, 'runs-index.json');
+
+  const currentMeta = readJsonSafe<RunMeta | null>(latestRunMetaPath, null);
+  if (!currentMeta) return;
+
+  if (!currentMeta.reports) currentMeta.reports = [];
+  if (!currentMeta.reports.includes(reportType)) {
+    currentMeta.reports.push(reportType);
+  }
+
+  const existingIndex = readJsonSafe<RunMeta[]>(runIndexPath, []);
+  const updated = existingIndex.map(entry =>
+    entry.runId === currentMeta.runId ? { ...entry, reports: currentMeta.reports } : entry
+  );
+
+  writeJsonAtomic(latestRunMetaPath, currentMeta);
+  writeJsonAtomic(runIndexPath, updated);
 }
 
 // If called directly (not imported)

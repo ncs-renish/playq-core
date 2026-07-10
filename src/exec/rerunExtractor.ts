@@ -243,7 +243,7 @@ export function extractFailedTests(reportDir: string, runner: 'playwright' | 'cu
   };
   
   const playwrightJunitTime = getModTime(path.join(reportDir, 'e2e-junit-results.xml'));
-  const cucumberReportTime = getModTime(path.join(reportDir, 'cucumber-report.json'));
+  const cucumberReportTime = getModTime(path.join(reportDir, 'cucumber-report', 'cucumber-report.json'));
   const bothRunners = runner === 'both';
 
   // **PRIMARY SOURCE**: Extract from junit results (most reliable, shows actual failures)
@@ -278,7 +278,7 @@ export function extractFailedTests(reportDir: string, runner: 'playwright' | 'cu
 
   // Extract from Cucumber reports (only if Cucumber was the actual runner)
   if (runner === 'cucumber' || (bothRunners && cucumberReportTime > 0)) {
-    const cucumberFile = path.join(reportDir, 'cucumber-report.json');
+    const cucumberFile = path.join(reportDir, 'cucumber-report', 'cucumber-report.json');
     if (fs.existsSync(cucumberFile)) {
       const failed = extractFailedCucumberTests(cucumberFile);
       failed.forEach(t => uniqueTests.set(t.name, t));

@@ -6,14 +6,14 @@ const path = require("path");
 const RESULTS_DIR = process.env.PLAYQ_RESULTS_DIR || 'test-results';
 
 try {
-    fs.ensureDirSync(path.join(RESULTS_DIR, 'screenshots'));
-    fs.emptyDirSync(path.join(RESULTS_DIR, 'screenshots'));
+    fs.ensureDirSync(path.join(RESULTS_DIR, 'artifacts', 'screenshots'));
+    fs.emptyDirSync(path.join(RESULTS_DIR, 'artifacts', 'screenshots'));
 
-    fs.ensureDirSync(path.join(RESULTS_DIR, 'videos'));
-    fs.emptyDirSync(path.join(RESULTS_DIR, 'videos'));
+    fs.ensureDirSync(path.join(RESULTS_DIR, 'artifacts', 'videos'));
+    fs.emptyDirSync(path.join(RESULTS_DIR, 'artifacts', 'videos'));
 
-    fs.ensureDirSync(path.join(RESULTS_DIR, 'trace'));
-    fs.emptyDirSync(path.join(RESULTS_DIR, 'trace'));
+    fs.ensureDirSync(path.join(RESULTS_DIR, 'artifacts', 'trace'));
+    fs.emptyDirSync(path.join(RESULTS_DIR, 'artifacts', 'trace'));
 
     // Do NOT clean the whole test-results folder!
     // fs.emptyDirSync("test-results");

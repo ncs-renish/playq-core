@@ -1,7 +1,7 @@
 import { spawnSync, execSync, spawn } from 'child_process';
 import minimist from 'minimist';
 import { loadEnv } from '../helper/bundle/env';
-import { initRun, updateRunStatus } from '../scripts/pretest';
+import { initRun, updateRunStatus, registerRunReport } from '../scripts/pretest';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
@@ -95,6 +95,200 @@ function openReport(): void {
     }
   } catch (err) {
     console.error(`❌ Error opening report: ${err}`);
+  }
+}
+
+/**
+ * Read report.allure.enable from resources/config.ts via regex (same approach as autoReportOpen).
+ * Returns true only when explicitly set to true.
+ */
+function readAllureEnabledFromConfig(): boolean {
+  const projectRoot = process.cwd();
+  const candidates = [
+    path.join(projectRoot, 'resources', 'config.ts'),
+    path.join(projectRoot, 'resources', 'config.js'),
+  ];
+
+  for (const cfgPath of candidates) {
+    try {
+      if (!fs.existsSync(cfgPath)) continue;
+      const content = fs.readFileSync(cfgPath, 'utf-8');
+      const allureBlock = content.match(/allure\s*:\s*\{([^}]+)\}/s);
+      if (!allureBlock) return false;
+      const enableMatch = allureBlock[1].match(/enable\s*:\s*(true|false)/);
+      return enableMatch?.[1] === 'true';
+    } catch {
+      // continue
+    }
+  }
+  return false;
+}
+
+/**
+ * Determine if Allure is enabled for this run.
+ * Checks env override first, then vars, then direct config file read.
+ */
+function isAllureEnabled(): boolean {
+  const envOverride = process.env.PLAYQ__report__allure__enable;
+  if (envOverride !== undefined) return envOverride.toLowerCase() === 'true';
+  try {
+    const val = vars.getConfigValue('report.allure.enable') as any;
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'string' && !val.startsWith('config.')) return val.toLowerCase() === 'true';
+  } catch { /* fall through */ }
+  return readAllureEnabledFromConfig();
+}
+
+/**
+ * Read report.allure.singleFile from resources/config.ts via regex.
+ * Returns true only when explicitly set to true.
+ */
+function readAllureSingleFileFromConfig(): boolean {
+  const projectRoot = process.cwd();
+  const candidates = [
+    path.join(projectRoot, 'resources', 'config.ts'),
+    path.join(projectRoot, 'resources', 'config.js'),
+  ];
+
+  for (const cfgPath of candidates) {
+    try {
+      if (!fs.existsSync(cfgPath)) continue;
+      const content = fs.readFileSync(cfgPath, 'utf-8');
+      const allureBlock = content.match(/allure\s*:\s*\{([^}]+)\}/s);
+      if (!allureBlock) return false;
+      const singleFileMatch = allureBlock[1].match(/singleFile\s*:\s*(true|false)/);
+      return singleFileMatch?.[1] === 'true';
+    } catch {
+      // continue
+    }
+  }
+  return false;
+}
+
+/**
+ * Determine if Allure single-file report mode is enabled.
+ */
+function isAllureSingleFileEnabled(): boolean {
+  const envOverride = process.env.PLAYQ__report__allure__singleFile;
+  if (envOverride !== undefined) return envOverride.toLowerCase() === 'true';
+  try {
+    const val = vars.getConfigValue('report.allure.singleFile') as any;
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'string' && !val.startsWith('config.')) return val.toLowerCase() === 'true';
+  } catch {
+    // fall through
+  }
+  return readAllureSingleFileFromConfig();
+}
+
+/**
+ * Allure 3 UI can throw when a test result has `error: {}` without a message.
+ * Normalize generated test JSONs to ensure `error.message` always exists.
+ */
+function normalizeGeneratedAllureReport(reportDir: string): void {
+  const testResultsDir = path.join(reportDir, 'data', 'test-results');
+  if (!fs.existsSync(testResultsDir)) return;
+
+  const normalizeNode = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+
+    if (!node.error || typeof node.error !== 'object') {
+      node.error = { message: '', trace: '' };
+    } else {
+      if (typeof node.error.message !== 'string') node.error.message = '';
+      if (typeof node.error.trace !== 'string') node.error.trace = '';
+    }
+
+    if (!node.statusDetails || typeof node.statusDetails !== 'object') {
+      node.statusDetails = { message: '', trace: '' };
+    } else {
+      if (typeof node.statusDetails.message !== 'string') node.statusDetails.message = '';
+      if (typeof node.statusDetails.trace !== 'string') node.statusDetails.trace = '';
+    }
+
+    // Recursively normalize nested steps
+    if (Array.isArray(node.steps)) {
+      node.steps.forEach((s: any) => normalizeNode(s));
+    }
+  };
+
+  const files = fs.readdirSync(testResultsDir).filter(f => f.endsWith('.json'));
+  for (const file of files) {
+    const fullPath = path.join(testResultsDir, file);
+    try {
+      const raw = fs.readFileSync(fullPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') continue;
+
+      normalizeNode(parsed);
+      (parsed.setup || []).forEach((s: any) => normalizeNode(s));
+      (parsed.teardown || []).forEach((s: any) => normalizeNode(s));
+      fs.writeFileSync(fullPath, JSON.stringify(parsed));
+    } catch {
+      // Keep report generation non-blocking even if a single file is malformed.
+    }
+  }
+}
+
+/**
+ * Run `allure generate` to convert raw allure-results into a full HTML report.
+ * Registers 'allure' in run.reports[] on success.
+ */
+function generateAllureReport(): void {
+  const resultsDir = process.env.PLAYQ_RESULTS_DIR;
+  if (!resultsDir) return;
+
+  const allureResultsDir = path.join(resultsDir, 'allure-results');
+  const allureReportDir = path.join(resultsDir, 'allure-report');
+
+  if (!fs.existsSync(allureResultsDir)) {
+    console.warn('⚠️  allure-results not found — skipping allure generate');
+    return;
+  }
+
+  const singleFileRequested = isAllureSingleFileEnabled();
+  const activeRunner = String(process.env.PLAYQ_RUNNER || process.env.TEST_RUNNER || '').toLowerCase();
+  const useSingleFile = singleFileRequested && activeRunner !== 'cucumber';
+
+  if (singleFileRequested && activeRunner === 'cucumber') {
+    console.log('ℹ️  Allure single-file mode requested, but Cucumber step details are not fully rendered in Awesome single-file output.');
+    console.log('   Falling back to standard Allure HTML generation for this run to preserve scenario steps.');
+  }
+
+  console.log(`\n📊 Generating Allure report${useSingleFile ? ' (single-file mode)' : ''}...`);
+  try {
+    // Prefer local node_modules/.bin/allure over npx to avoid picking up a global binary.
+    const localAllure = path.resolve(process.cwd(), 'node_modules', '.bin', 'allure');
+    const allureBin = fs.existsSync(localAllure) ? localAllure : 'allure';
+
+    if (fs.existsSync(allureReportDir)) {
+      fs.rmSync(allureReportDir, { recursive: true, force: true });
+    }
+
+    const allureArgs = useSingleFile
+      ? ['awesome', allureResultsDir, '--output', allureReportDir, '--single-file']
+      : ['generate', allureResultsDir, '--output', allureReportDir];
+
+    const result = spawnSync(allureBin, allureArgs, { stdio: 'pipe', shell: false });
+
+    const stderr = result.stderr?.toString() ?? '';
+    const javaNotFound = stderr.includes('Java') || stderr.includes('java') || (result.error as any)?.message?.includes('Java');
+
+    if (result.status === 0) {
+      normalizeGeneratedAllureReport(allureReportDir);
+      console.log(`✅ Allure report generated: ${allureReportDir}`);
+      registerRunReport('allure');
+    } else if (javaNotFound || stderr.includes('Unable to locate a Java Runtime')) {
+      console.warn('⚠️  Detected Java-based Allure CLI. Java runtime was not found.');
+      console.warn(`   Raw allure results saved at: ${allureResultsDir}`);
+      console.warn('   Recommended: use Allure Report 3 (JS CLI) by installing package "allure" in the project.');
+      console.warn(`   Then run: npx allure generate "${allureResultsDir}" --output "${allureReportDir}"`);
+    } else {
+      console.warn('⚠️  allure generate failed. Raw results at:', allureResultsDir);
+      if (stderr) console.warn('   Error:', stderr.substring(0, 200));
+    }
+  } catch (err) {
+    console.warn('⚠️  Failed to run allure generate:', (err as any)?.message);
   }
 }
 
@@ -322,16 +516,21 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
   }
 
   console.log(`🎭 Running Cucumber: npx ${cucumberArgs.join(' ')}`);
+  const childEnv = { ...process.env } as any;
+  if (isAllureEnabled() && process.env.PLAYQ_RESULTS_DIR) {
+    childEnv.ALLURE_RESULTS_DIR = path.join(process.env.PLAYQ_RESULTS_DIR, 'allure-results');
+  }
   
   const run = spawn('npx', cucumberArgs, {
     stdio: 'inherit',
-    env: { ...process.env },
+    env: childEnv,
     shell: true,
   });
 
   run.on('close', (code, signal) => {
     const exitCode = code ?? (signal ? 1 : 0);
     updateRunStatus(exitCode);
+    if (isAllureEnabled()) generateAllureReport();
     // Open report if configured
     if (shouldAutoOpenReport()) {
       openReport();
@@ -401,6 +600,7 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
     }
 
     updateRunStatus(overallExitCode);
+    if (isAllureEnabled()) generateAllureReport();
     // Open report if configured
     if (shouldAutoOpenReport()) {
       openReport();
@@ -444,6 +644,7 @@ if (process.env.PLAYQ_RUNNER && process.env.PLAYQ_RUNNER === 'cucumber') {
     console.log(`\n📋 Test execution completed with exit code: ${result.status ?? 1}`);
     const pwExitCode = result.status ?? 1;
     updateRunStatus(pwExitCode);
+    if (isAllureEnabled()) generateAllureReport();
     // Open report if configured
     if (shouldAutoOpenReport()) {
       openReport();

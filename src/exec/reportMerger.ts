@@ -259,8 +259,8 @@ export function mergeAllReports(
 
   // Merge Cucumber Reports
   if (runner === 'cucumber' || runner === 'both') {
-    const cucumberInitial = path.join(initialReportDir, 'cucumber-report.json');
-    const cucumberRerun = path.join(rerunReportDir, 'cucumber-report.json');
+    const cucumberInitial = path.join(initialReportDir, 'cucumber-report', 'cucumber-report.json');
+    const cucumberRerun = path.join(rerunReportDir, 'cucumber-report', 'cucumber-report.json');
     if (fs.existsSync(cucumberInitial) || fs.existsSync(cucumberRerun)) {
       mergeCucumberReports(cucumberInitial, cucumberRerun, outputDir);
     }

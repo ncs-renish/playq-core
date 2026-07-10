@@ -10,7 +10,7 @@ function sanitiseFileName(name: string): string {
 export function options(scenarioName: string) {
     const sanitised = sanitiseFileName(scenarioName);
     const resultsDir = process.env.PLAYQ_RESULTS_DIR || 'test-results';
-    const logDir = path.join(resultsDir, "logs", sanitised);
+    const logDir = path.join(resultsDir, 'artifacts', 'logs', sanitised);
 
     // ✅ Ensure directory exists
     if (!fs.existsSync(logDir)) {

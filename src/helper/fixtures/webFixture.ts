@@ -29,7 +29,7 @@ export const webFixture = {
     if (!options) {
       options = {
         recordVideo: {
-          dir: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'videos'),
+          dir: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'artifacts', 'videos'),
         },
       };
     }
@@ -143,7 +143,7 @@ export const webFixture = {
           try {
             // If tracing is on, stop and save
             if (context.tracing && context.tracing.stop) {
-              await context.tracing.stop({ path: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'trace', 'trace.zip') });
+              await context.tracing.stop({ path: path.join(process.env.PLAYQ_RESULTS_DIR || 'test-results', 'artifacts', 'trace', 'trace.zip') });
             }
             await page.close();
           } catch (err) {

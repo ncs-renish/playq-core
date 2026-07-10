@@ -1,6 +1,6 @@
 {
   "name": "@playq/core",
-  "version": "0.3.19",
+  "version": "0.3.32",
   "description": "PlayQ Core (Phase 1) - raw TypeScript sources only.",
   "files": [
     "bin",
@@ -30,6 +30,7 @@
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
     "@faker-js/faker": "^9.6.0",
+    "@playq/core": "file:playq-core-0.3.28.tgz",
     "ajv": "^8.0.0",
     "allure-js-commons": "^2.14.0",
     "axios": "^1.10.0",

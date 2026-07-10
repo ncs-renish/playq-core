@@ -17,8 +17,8 @@
  */
 
 import path from 'path';
-import { existsSync, readFileSync } from 'fs';
-import { spawnSync } from 'child_process';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'fs';
+import { spawn, spawnSync } from 'child_process';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -42,7 +42,7 @@ type RunMeta = {
 
 const REPORT_PATHS: Record<ReportType, string> = {
   playwright: 'playwright-report/index.html',
-  cucumber: 'cucumber-report.html',
+  cucumber: 'cucumber-report/index.html',
   allure: 'allure-report/index.html',
   'cucumber-multi': 'cucumber-multi-report/index.html',
 };
@@ -81,12 +81,13 @@ Examples:
 
 Report locations (per run folder):
   Playwright : test-results/runs/<runId>/playwright-report/index.html
-  Cucumber   : test-results/runs/<runId>/cucumber-report.html
+  Cucumber   : test-results/runs/<runId>/cucumber-report/index.html
+  Allure     : test-results/runs/<runId>/allure-report/index.html
 
 Notes:
   - Only completed runs are targeted by default selectors.
   - Use the full run ID to open incomplete/failed runs.
-  - Allure report support is planned for v0.4.0.
+  - Allure report requires config.report.allure.enable = true and allure-playwright/allure-cucumberjs installed.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,9 +122,7 @@ function getReportPath(runMeta: RunMeta, testResultsRoot: string, typeOverride?:
     (runMeta.runType === 'bdd' ? 'cucumber' : 'playwright');
 
   if (reportType === 'allure') {
-    // TODO (v0.4.0): Allure support (requires `allure generate` to be run first)
-    console.error('❌ Allure report opening is not yet supported. Coming in v0.4.0.');
-    process.exit(1);
+    return path.join(runDir, 'allure-report', 'index.html');
   }
 
   if (reportType === 'cucumber-multi') {
@@ -155,6 +154,80 @@ function openFile(filePath: string): void {
   if (result.error) {
     console.error(`❌ Failed to open report: ${result.error.message}`);
     process.exit(1);
+  }
+}
+
+function openAllureReport(reportIndexPath: string): boolean {
+  const reportDir = path.dirname(reportIndexPath);
+  const dataDir = path.join(reportDir, 'data', 'test-results');
+
+  // Multi-file Allure reports should be served over HTTP. Opening index.html via
+  // file:// can hide detailed test data (including steps) in some browsers.
+  if (!existsSync(dataDir)) {
+    return false;
+  }
+
+  // Normalize report JSONs for UI compatibility and create legacy widget alias.
+  try {
+    const normalizeNode = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+
+      if (!node.error || typeof node.error !== 'object') {
+        node.error = { message: '', trace: '' };
+      } else {
+        if (typeof node.error.message !== 'string') node.error.message = '';
+        if (typeof node.error.trace !== 'string') node.error.trace = '';
+      }
+
+      if (!node.statusDetails || typeof node.statusDetails !== 'object') {
+        node.statusDetails = { message: '', trace: '' };
+      } else {
+        if (typeof node.statusDetails.message !== 'string') node.statusDetails.message = '';
+        if (typeof node.statusDetails.trace !== 'string') node.statusDetails.trace = '';
+      }
+
+      // Recursively normalize nested steps
+      if (Array.isArray(node.steps)) {
+        node.steps.forEach((s: any) => normalizeNode(s));
+      }
+    };
+
+    const testFiles = readdirSync(dataDir).filter(f => f.endsWith('.json'));
+    for (const file of testFiles) {
+      const fullPath = path.join(dataDir, file);
+      try {
+        const parsed = JSON.parse(readFileSync(fullPath, 'utf-8'));
+        normalizeNode(parsed);
+        (parsed.setup || []).forEach((s: any) => normalizeNode(s));
+        (parsed.teardown || []).forEach((s: any) => normalizeNode(s));
+        writeFileSync(fullPath, JSON.stringify(parsed));
+      } catch {
+        // Keep opening non-blocking even if a single file is malformed.
+      }
+    }
+
+    const widgetsDir = path.join(reportDir, 'widgets');
+    const legacyEnvPath = path.join(widgetsDir, 'allure_environment.json');
+    const currentEnvPath = path.join(widgetsDir, 'environments.json');
+    if (!existsSync(legacyEnvPath)) {
+      const content = existsSync(currentEnvPath) ? readFileSync(currentEnvPath, 'utf-8') : '{}';
+      writeFileSync(legacyEnvPath, content);
+    }
+  } catch {
+    // Non-blocking: if normalization fails, still attempt to open report.
+  }
+
+  try {
+    const child = spawn('npx', ['allure', 'open', reportDir], {
+      detached: true,
+      stdio: 'ignore',
+      shell: true,
+    });
+    child.unref();
+    console.log('ℹ️  Opening Allure in served mode via "allure open" for full step rendering.');
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -203,8 +276,8 @@ function parseArgs(rawArgs: string[]): {
   }
 
   // Validate --type value if provided
-  if (typeOverride && !['cucumber', 'playwright', 'allure'].includes(typeOverride)) {
-    console.error(`❌ Invalid --type value: "${typeOverride}". Must be cucumber, playwright, or allure.`);
+  if (typeOverride && !['cucumber', 'playwright', 'allure', 'cucumber-multi'].includes(typeOverride)) {
+    console.error(`❌ Invalid --type value: "${typeOverride}". Must be: playwright, cucumber, allure, cucumber-multi.`);
     process.exit(1);
   }
 
@@ -342,6 +415,10 @@ function main(): void {
   console.log(`    Run   : ${selectedRun.runId}`);
   console.log(`    Status: ${selectedRun.status}`);
   console.log(`    Report: ${reportPath}\n`);
+
+  if (typeLabel === 'allure' && openAllureReport(reportPath)) {
+    return;
+  }
 
   openFile(reportPath);
 }
