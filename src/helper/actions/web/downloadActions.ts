@@ -11,6 +11,7 @@
 import * as allure from "allure-js-commons";
 import * as fs from "fs";
 import * as path from "path";
+import { request as playwrightRequest } from "playwright";
 import type { Page, Locator } from "playwright";
 import { vars, webLocResolver } from "../../../global";
 import { waitForPageToLoad } from "./waitActions";
@@ -101,21 +102,151 @@ export async function downloadFile(
 
   const run = async () => {
     await waitForPageToLoad(page, actionTimeout);
-    const target =
-      typeof resolvedField === 'string'
-        ? await webLocResolver(locatorCategory, resolvedField, page, pattern, actionTimeout)
-        : resolvedField;
-
-    await processScreenshot(page, screenshotBefore, screenshotText, screenshotFullPage);
-
-    const [download] = await Promise.all([
-      page.waitForEvent('download', { timeout: actionTimeout }),
-      (target as any).click({ timeout: actionTimeout })
-    ]);
-
-    const suggested = download.suggestedFilename();
+    const perAttemptTimeout = Math.max(3000, Math.min(10000, Math.floor(actionTimeout / 3)));
     const root = (targetDir ? path.resolve(targetDir) : path.join(process.env.PLAYQ_PROJECT_ROOT || process.cwd(), '_Temp', 'downloads'));
     if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true });
+
+    const resolveHrefFromLocator = async (locator: Locator): Promise<string | null> => {
+      const direct = await locator.getAttribute('href', { timeout: 1000 }).catch(() => null);
+      if (direct) return new URL(direct, page.url()).toString();
+      const nested = await locator.locator('a[href]').first().getAttribute('href', { timeout: 1000 }).catch(() => null);
+      if (nested) return new URL(nested, page.url()).toString();
+      return null;
+    };
+
+    const saveFromUrl = async (fileUrl: string): Promise<string> => {
+      let response;
+      let body: Buffer | undefined;
+      let retryWithFallback = false;
+
+      try {
+        response = await page.request.get(fileUrl, { timeout: actionTimeout });
+        if (!response.ok()) {
+          throw new Error(`downloadFile: failed to fetch '${fileUrl}' (status ${response.status()})`);
+        }
+        // Read body immediately while response context is still valid
+        try {
+          body = await response.body();
+        } catch (bodyErr: any) {
+          const msg = String(bodyErr?.message || bodyErr || '');
+          if (/disposed|closed/i.test(msg)) {
+            // Fallback to alternative method
+            retryWithFallback = true;
+          } else {
+            throw bodyErr;
+          }
+        }
+      } catch (err: any) {
+        const msg = String(err?.message || err || '');
+        if (/unable to get local issuer certificate|self signed certificate|certificate/i.test(msg)) {
+          retryWithFallback = true;
+        } else if (/disposed|closed/i.test(msg)) {
+          retryWithFallback = true;
+        } else {
+          throw err;
+        }
+      }
+
+      // Retry with standalone playwright request context if page.request failed
+      if (retryWithFallback && !body) {
+        const insecureRequest = await playwrightRequest.newContext({ 
+          ignoreHTTPSErrors: true,
+          timeout: actionTimeout
+        });
+        try {
+          response = await insecureRequest.get(fileUrl, { timeout: actionTimeout });
+          if (!response.ok()) {
+            throw new Error(`downloadFile: failed to fetch '${fileUrl}' (status ${response.status()})`);
+          }
+          // Read body immediately
+          body = await response.body().catch((err: any) => {
+            throw new Error(`Failed to read response body: ${err?.message || err}`);
+          });
+        } finally {
+          await insecureRequest.dispose();
+        }
+      }
+      
+      if (!body) {
+        throw new Error(`downloadFile: No response body received from '${fileUrl}'`);
+      }
+      
+      const pathname = new URL(fileUrl).pathname;
+      const urlName = decodeURIComponent(path.basename(pathname)) || 'download.bin';
+      const finalName = fileName || urlName;
+      const savePath = path.join(root, finalName);
+      fs.writeFileSync(savePath, body);
+      return savePath;
+    };
+
+    const clickTargets: Array<{ name: string; locator: Locator }> = [];
+    if (typeof resolvedField === 'string') {
+      const categories = Array.from(new Set([
+        locatorCategory,
+        locatorCategory === 'button' ? 'link' : 'button'
+      ]));
+
+      for (const category of categories) {
+        const loc = await webLocResolver(category, resolvedField, page, pattern, actionTimeout);
+        if (loc) clickTargets.push({ name: `pattern:${category}`, locator: loc });
+      }
+
+      clickTargets.push({
+        name: 'role:link(exact)',
+        locator: page.getByRole('link', { name: resolvedField, exact: true }).first()
+      });
+      clickTargets.push({
+        name: 'role:link(partial)',
+        locator: page.getByRole('link', { name: resolvedField }).first()
+      });
+    } else {
+      clickTargets.push({ name: 'provided-locator', locator: resolvedField });
+    }
+
+    await processScreenshot(page, screenshotBefore, screenshotText, screenshotFullPage);
+    const hrefCandidates = Array.from(new Set((await Promise.all(clickTargets.map(async (attempt) => resolveHrefFromLocator(attempt.locator)))).filter(Boolean) as string[]));
+    let lastError: any;
+
+    for (const href of hrefCandidates) {
+      try {
+        const saved = await saveFromUrl(href);
+        await processScreenshot(page, screenshot, screenshotText, screenshotFullPage);
+        return saved;
+      } catch (e) {
+        lastError = e;
+        console.log(`⚠️ Direct href download failed: ${href}`);
+      }
+    }
+
+    let download: any;
+    for (const attempt of clickTargets) {
+      try {
+        [download] = await Promise.all([
+          page.waitForEvent('download', { timeout: perAttemptTimeout }),
+          attempt.locator.click({ timeout: perAttemptTimeout })
+        ]);
+        if (download) break;
+      } catch (e) {
+        lastError = e;
+        console.log(`⚠️ Download attempt failed using ${attempt.name}`);
+      }
+    }
+
+    if (!download) {
+      for (const href of hrefCandidates) {
+        try {
+          const saved = await saveFromUrl(href);
+          await processScreenshot(page, screenshot, screenshotText, screenshotFullPage);
+          return saved;
+        } catch (e) {
+          lastError = e;
+          console.log(`⚠️ Download href fallback failed: ${href}`);
+        }
+      }
+      throw lastError || new Error(`downloadFile: Unable to trigger download for field '${String(resolvedField)}'`);
+    }
+
+    const suggested = download.suggestedFilename();
     const finalName = fileName || suggested;
     const savePath = path.join(root, finalName);
     await download.saveAs(savePath);

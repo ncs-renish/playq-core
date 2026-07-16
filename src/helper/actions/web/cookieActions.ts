@@ -16,6 +16,54 @@ function isPlaywrightRunner() { return process.env.TEST_RUNNER === 'playwright';
 const __allureAny_cookie: any = allure as any;
 if (typeof __allureAny_cookie.step !== 'function') { __allureAny_cookie.step = async (_n: string, f: any) => await f(); }
 
+function parseCookieOptions(options?: string | Record<string, any>) {
+  if (!options) return {};
+  if (typeof options !== 'string') return options;
+
+  const raw = options.trim();
+  const tryLoose = (input: string) => {
+    try {
+      return vars.parseLooseJson(input);
+    } catch {
+      return undefined;
+    }
+  };
+
+  let parsed = tryLoose(raw);
+  if (parsed !== undefined) return parsed;
+
+  const wrappedByDouble = raw.startsWith('"') && raw.endsWith('"');
+  const wrappedBySingle = raw.startsWith("'") && raw.endsWith("'");
+
+  if (wrappedByDouble || wrappedBySingle) {
+    const unwrapped = raw.slice(1, -1).trim();
+    parsed = tryLoose(unwrapped);
+    if (parsed !== undefined) return parsed;
+
+    const normalized = unwrapped
+      .replace(/\\"/g, '"')
+      .replace(/\\'/g, "'");
+    parsed = tryLoose(normalized);
+    if (parsed !== undefined) return parsed;
+  }
+
+  try {
+    const jsonParsed = JSON.parse(raw);
+    if (jsonParsed && typeof jsonParsed === 'object') return jsonParsed;
+    if (typeof jsonParsed === 'string') {
+      parsed = tryLoose(jsonParsed);
+      if (parsed !== undefined) return parsed;
+
+      const normalized = jsonParsed.replace(/\\"/g, '"');
+      parsed = tryLoose(normalized);
+      if (parsed !== undefined) return parsed;
+    }
+  } catch {
+  }
+
+  return vars.parseLooseJson(raw);
+}
+
 /**
  * Web: Set Cookie -name: {param} -value: {param} -options: {param}
  *
@@ -30,7 +78,7 @@ if (typeof __allureAny_cookie.step !== 'function') { __allureAny_cookie.step = a
  */
 export async function setCookie(page: Page, name: string, value: string, options?: string | Record<string, any>) {
   if (!page) throw new Error("Page not initialized");
-  const options_json = typeof options === 'string' ? vars.parseLooseJson(options) : options || {};
+  const options_json = parseCookieOptions(options);
   const stepName = `Web: Set Cookie -name: ${name}`;
   if (!name) throw new Error("Cookie.setCookie: 'name' is required");
   if (value === undefined || value === null) throw new Error("Cookie.setCookie: 'value' is required");
@@ -46,9 +94,18 @@ export async function setCookie(page: Page, name: string, value: string, options
     // When url is specified, do not include domain/path
     cookie.url = explicitUrl;
   } else if (explicitDomain || explicitPath) {
-    // When domain/path are specified, do not include url
-    if (explicitDomain) cookie.domain = explicitDomain;
-    cookie.path = explicitPath || '/';
+    // When domain/path are specified, construct a URL for reliability
+    const pageUrl = new URL(page.url());
+    const hostPart = explicitDomain || pageUrl.hostname;
+    const pathPart = explicitPath || '/';
+    const protocol = pageUrl.protocol;
+    try {
+      cookie.url = `${protocol}//${hostPart}${pathPart}`;
+    } catch {
+      // Fallback to domain/path if URL construction fails
+      if (explicitDomain) cookie.domain = explicitDomain;
+      cookie.path = explicitPath || '/';
+    }
   } else {
     // Default to current page url if no domain/path/url provided
     cookie.url = page.url();
@@ -75,11 +132,37 @@ export async function setCookie(page: Page, name: string, value: string, options
  */
 export async function getCookie(page: Page, name: string, options?: string | Record<string, any>) {
   if (!page) throw new Error("Page not initialized");
-  const options_json = typeof options === 'string' ? vars.parseLooseJson(options) : options || {};
+  const options_json = parseCookieOptions(options);
   const stepName = `Web: Get Cookie -name: ${name}`;
+  const domainFilter = options_json?.domain ? String(options_json.domain).toLowerCase() : undefined;
+  const pathFilter = options_json?.path ? String(options_json.path) : undefined;
+
+  const normalizeDomain = (domain?: string) => (domain || '').toLowerCase().replace(/^\./, '');
+  const domainMatches = (cookieDomain?: string, targetDomain?: string) => {
+    if (!targetDomain) return true;
+    const cookie = normalizeDomain(cookieDomain);
+    const target = normalizeDomain(targetDomain);
+    return cookie === target || cookie.endsWith(`.${target}`);
+  };
+
+  const cookieMatches = (cookie: any) => {
+    if (!cookie || cookie.name !== name) return false;
+    if (!domainMatches(cookie.domain, domainFilter)) return false;
+    if (pathFilter && cookie.path !== pathFilter) return false;
+    return true;
+  };
+
   const run = async () => {
-    const cookies = await page.context().cookies(page.url());
-    const val = cookies.find(c => c.name === name)?.value;
+    const ctx = page.context();
+    const scopedCookies = await ctx.cookies(page.url());
+    let found = scopedCookies.find(cookieMatches);
+
+    if (!found) {
+      const allCookies = await ctx.cookies();
+      found = allCookies.find(cookieMatches);
+    }
+
+    const val = found?.value;
     if (options_json?.assert === true && (val === undefined || val === null)) {
       throw new Error(`Cookie.getCookie: No cookie found with name '${name}'`);
     }
